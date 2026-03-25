@@ -152,7 +152,7 @@ jobs:
           fi
 
           # Check that we have at least 1 worker pod running (one per node)
-          WORKER_COUNT=$(kubectl get pods -n kubeshark -l app.kubeshark.com/app=sniffer -o json | jq '[.items[] | select(.status.phase=="Running")] | length')
+          WORKER_COUNT=$(kubectl get pods -n kubeshark -l app.kubeshark.com/app=worker -o json | jq '[.items[] | select(.status.phase=="Running")] | length')
           if [ "$WORKER_COUNT" -lt 1 ]; then
             echo "ERROR: Expected at least 1 worker pod running, found $WORKER_COUNT"
             exit 1
@@ -193,4 +193,4 @@ jobs:
           kubectl describe pods -n kubeshark -l app.kubeshark.com/app=hub
           echo ""
           echo "=== Worker Pod Describe ==="
-          kubectl describe pods -n kubeshark -l app.kubeshark.com/app=sniffer
+          kubectl describe pods -n kubeshark -l app.kubeshark.com/app=worker
