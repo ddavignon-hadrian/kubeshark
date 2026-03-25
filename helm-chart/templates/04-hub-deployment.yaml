@@ -160,6 +160,8 @@ spec:
           - name: saml-x509-volume
             mountPath: "/etc/saml/x509"
             readOnly: true
+          - name: app-data
+            mountPath: "/app/data"
           - name: snapshots-volume
             mountPath: "/app/data/snapshots"
 {{- if gt (len .Values.tap.nodeSelectorTerms.hub) 0}}
@@ -210,6 +212,8 @@ spec:
       {{- end }}
       {{- end }}
       volumes:
+      - name: app-data
+        emptyDir: {}
       - name: saml-x509-volume
         projected:
           sources:

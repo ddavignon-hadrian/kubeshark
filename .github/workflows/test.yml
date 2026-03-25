@@ -78,3 +78,119 @@ jobs:
 
       - name: Validate GCS template
         run: helm template kubeshark ./helm-chart -f ./helm-chart/tests/fixtures/values-gcs.yaml | kubeconform -strict -kubernetes-version 1.35.0 -summary
+
+  helm-smoke-test:
+    name: Helm Smoke Test (kind)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v5
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v4
+
+      - name: Create kind config
+        run: |
+          cat > /tmp/kind-config.yaml << 'EOF'
+          kind: Cluster
+          apiVersion: kind.x-k8s.io/v1alpha4
+          nodes:
+          - role: control-plane
+          - role: worker
+          EOF
+
+      - name: Create kind cluster
+        uses: helm/kind-action@v1
+        with:
+          cluster_name: kubeshark-test
+          node_image: kindest/node:v1.33.0
+          config: /tmp/kind-config.yaml
+
+      - name: Install Kubeshark Helm chart
+        run: |
+          helm install kubeshark ./helm-chart \
+            --create-namespace \
+            --namespace kubeshark \
+            --wait \
+            --timeout 5m \
+            --debug
+
+      - name: Wait for all pods to be ready
+        run: |
+          kubectl wait --for=condition=ready pod \
+            --all \
+            --namespace kubeshark \
+            --timeout=300s
+
+      - name: Check pod status
+        run: |
+          echo "=== All Pods ==="
+          kubectl get pods -n kubeshark -o wide
+          echo ""
+          echo "=== Pod Logs (front) ==="
+          kubectl logs -n kubeshark -l app.kubeshark.com/app=front -c prepare-html --tail=50 || true
+          kubectl logs -n kubeshark -l app.kubeshark.com/app=front -c kubeshark-front --tail=50 || true
+          echo ""
+          echo "=== Pod Logs (hub) ==="
+          kubectl logs -n kubeshark -l app.kubeshark.com/app=hub --tail=50 || true
+
+      - name: Verify expected pods are running
+        run: |
+          # Check that we have exactly 1 front pod running
+          FRONT_COUNT=$(kubectl get pods -n kubeshark -l app.kubeshark.com/app=front -o json | jq '[.items[] | select(.status.phase=="Running")] | length')
+          if [ "$FRONT_COUNT" -ne 1 ]; then
+            echo "ERROR: Expected 1 front pod running, found $FRONT_COUNT"
+            exit 1
+          fi
+
+          # Check that we have exactly 1 hub pod running
+          HUB_COUNT=$(kubectl get pods -n kubeshark -l app.kubeshark.com/app=hub -o json | jq '[.items[] | select(.status.phase=="Running")] | length')
+          if [ "$HUB_COUNT" -ne 1 ]; then
+            echo "ERROR: Expected 1 hub pod running, found $HUB_COUNT"
+            exit 1
+          fi
+
+          # Check that we have at least 1 worker pod running (one per node)
+          WORKER_COUNT=$(kubectl get pods -n kubeshark -l app.kubeshark.com/app=worker -o json | jq '[.items[] | select(.status.phase=="Running")] | length')
+          if [ "$WORKER_COUNT" -lt 1 ]; then
+            echo "ERROR: Expected at least 1 worker pod running, found $WORKER_COUNT"
+            exit 1
+          fi
+
+          echo "✓ All expected pods are running"
+
+      - name: Test front service accessibility
+        run: |
+          kubectl port-forward -n kubeshark service/kubeshark-front 8899:80 &
+          PF_PID=$!
+          sleep 5
+
+          # Test that we can reach the service
+          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:8899/)
+          if [ "$HTTP_CODE" -ne 200 ]; then
+            echo "ERROR: Expected HTTP 200, got $HTTP_CODE"
+            kill $PF_PID 2>/dev/null || true
+            exit 1
+          fi
+
+          kill $PF_PID 2>/dev/null || true
+          echo "✓ Front service is accessible and returns HTTP 200"
+
+      - name: Dump logs on failure
+        if: failure()
+        run: |
+          echo "=== All Resources ==="
+          kubectl get all -n kubeshark -o wide
+          echo ""
+          echo "=== Events ==="
+          kubectl get events -n kubeshark --sort-by='.lastTimestamp'
+          echo ""
+          echo "=== Front Pod Describe ==="
+          kubectl describe pods -n kubeshark -l app.kubeshark.com/app=front
+          echo ""
+          echo "=== Hub Pod Describe ==="
+          kubectl describe pods -n kubeshark -l app.kubeshark.com/app=hub
+          echo ""
+          echo "=== Worker Pod Describe ==="
+          kubectl describe pods -n kubeshark -l app.kubeshark.com/app=worker
