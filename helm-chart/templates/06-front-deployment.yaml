@@ -43,7 +43,7 @@ spec:
             - |
               set -e
               echo "Copying HTML files to shared volume..."
-              cp -r /usr/share/nginx/html/* /shared-html/
+              cp -r /usr/share/nginx/html/. /shared-html/
               echo "Running import-meta-env.js to inject environment variables..."
               cd /shared-html
               node ./import-meta-env.js -x .env.example.public -p index.html
@@ -107,6 +107,8 @@ spec:
               value: '{{ and .Values.supportChatEnabled .Values.internetConnectivity | ternary "true" "false" }}'
             - name: REACT_APP_BETA_ENABLED
               value: '{{ default false .Values.betaEnabled | ternary "true" "false" }}'
+            - name: REACT_APP_AI_ASSISTANT_ENABLED
+              value: '{{ default false .Values.betaEnabled | ternary "true" "false" }}'
             - name: REACT_APP_DISSECTORS_UPDATING_ENABLED
               value: '{{ not (default false .Values.demoModeEnabled) }}'
             - name: REACT_APP_SNAPSHOTS_UPDATING_ENABLED
@@ -142,6 +144,8 @@ spec:
           image: '{{ .Values.tap.docker.registry }}/front:{{ not (eq .Values.tap.docker.tag "") | ternary .Values.tap.docker.tag (include "kubeshark.defaultVersion" .) }}'
         {{- end }}
           imagePullPolicy: {{ .Values.tap.docker.imagePullPolicy }}
+          command: ["/docker-entrypoint.sh"]
+          args: ["nginx", "-g", "daemon off;"]
           livenessProbe:
             periodSeconds: 1
             failureThreshold: 3
@@ -180,6 +184,10 @@ spec:
               mountPath: /etc/nginx/conf.d/default.conf
               subPath: default.conf
               readOnly: true
+            - name: nginx-cache
+              mountPath: /var/cache/nginx
+            - name: nginx-run
+              mountPath: /var/run
 {{- if gt (len .Values.tap.nodeSelectorTerms.front) 0}}
       affinity:
         nodeAffinity:
@@ -229,6 +237,10 @@ spec:
       {{- end }}
       volumes:
         - name: shared-html
+          emptyDir: {}
+        - name: nginx-cache
+          emptyDir: {}
+        - name: nginx-run
           emptyDir: {}
         - name: nginx-config
           configMap:
